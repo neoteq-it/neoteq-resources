@@ -1,0 +1,47 @@
+#cloud-config
+hostname: {{HOSTNAME}}
+preserve_hostname: false
+manage_etc_hosts: true
+
+users:
+  - name: ntq
+    groups: [sudo, adm]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+package_update: true
+package_upgrade: false
+packages:
+  - curl
+  - gnupg
+  - ca-certificates
+  - htop
+  - qemu-guest-agent
+#EXTRA_PACKAGES_PLACEHOLDER
+
+runcmd:
+  # Ensure basic tooling
+  - apt-get update
+  - apt-get install -y apt-transport-https
+
+  # Install Proxmox Guest Agent
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Tailscale for management overlay
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - systemctl enable --now tailscaled
+  - |
+      # Bring Tailscale up (auth key injected by deploy script)
+      #TAILSCALE_UP_CMD
+
+  # Optional: basic hardening tweaks
+  - sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - systemctl restart ssh || systemctl restart sshd
+
+  # Tag with role/customer for later automation (e.g., via Ansible pull)
+  - mkdir -p /etc/ntq
+  - bash -lc 'echo "{{ROLE}}" > /etc/ntq/role'
+  - bash -lc 'echo "{{CUSTOMER}}" > /etc/ntq/customer'
+
+final_message: "ntq cloud-init finished for {{HOSTNAME}}"
