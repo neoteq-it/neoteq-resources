@@ -29,7 +29,8 @@ VLAN="0"
 CPU=2
 RAM=4096
 DISK="20G"
-SSH_KEY_URL="https://neoteq.be/install/global/key.pub"
+SSH_KEY_URL="https://pub.neoteq.be/orbs/key.pub"
+TEMPL_URL="https://pub.neoteq.be/orbs/userdata-orb.yaml.templ"
 CI_USER="ntq"
 DNS_SERVER=""
 SEARCH_DOMAIN=""
@@ -216,7 +217,10 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATE_PATH="${SCRIPT_DIR}/userdata-ops.yaml.tmpl"
+TEMPLATE_PATH="${SCRIPT_DIR}/userdata-orb.yaml.tmpl"
+
+curl -fsSL "$TEMPL_URL" -o "$TEMPLATE_PATH"
+
 [[ -r "$TEMPLATE_PATH" ]] || err "Missing template $TEMPLATE_PATH"
 
 UD_FILE="${SNIPPETS_DIR}/${NAME}-user-data.yaml"
