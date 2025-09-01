@@ -239,7 +239,7 @@ if [[ -n "$EXTRA_PACKAGES" ]]; then
 fi
 
 if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
-  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --accept-dns=false --ssh|g" "$UD_FILE"
+  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --ssh|g" "$UD_FILE"
 else
   sed -i "s|#TAILSCALE_UP_CMD|echo 'No tailscale auth key provided'|g" "$UD_FILE"
 fi
