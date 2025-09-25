@@ -13,7 +13,7 @@ VLAN="0"
 CPU=2
 RAM=4096
 DISK="20G"
-SSH_KEY_URL="https://pub.neoteq.be/vm/key.pub"
+SSH_KEY_URL="https://pub.neoteq.be/vm/vm-key.pub"
 CI_USER="ntq"
 DNS_SERVER=""
 SEARCH_DOMAIN=""
@@ -189,6 +189,7 @@ users:
     groups: sudo
     shell: /bin/bash
     lock_passwd: true
+    ssh_authorized_keys: ["$(cat $SSH_KEY_FILE)"]
 package_update: true
 package_upgrade: true
 packages:
