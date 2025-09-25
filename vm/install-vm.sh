@@ -13,7 +13,7 @@ VLAN="0"
 CPU=2
 RAM=4096
 DISK="20G"
-SSH_KEY_URL="https://neoteq.be/vm/key.pub"
+SSH_KEY_URL="https://pub.neoteq.be/vm/key.pub"
 CI_USER="ntq"
 DNS_SERVER=""
 SEARCH_DOMAIN=""
@@ -115,28 +115,11 @@ mkdir -p "$SNIPPETS_DIR"
 IMAGES_DIR="/var/lib/vz/template/tmp"
 mkdir -p "$IMAGES_DIR"
 
-next_vmid() {
-  local existing vmid
-  if command -v pvesh >/dev/null 2>&1; then
-    existing=$(pvesh get /cluster/resources --type vm 2>/dev/null | \
-               grep -o '"vmid":[0-9]\+' | cut -d: -f2 | sort -n | uniq)
-  fi
-  if [[ -z "$existing" ]]; then
-    existing=$( { qm list 2>/dev/null | awk 'NR>1{print $1}'; \
-                 pct list 2>/dev/null | awk 'NR>1{print $1}'; } | sort -n | uniq )
-  fi
-  vmid=900
-  while [[ -n "$existing" ]] && echo "$existing" | grep -qx "$vmid"; do
-    vmid=$((vmid+1))
-  done
-  echo "$vmid"
-}
-
 name_exists_cluster() {
   local wanted="$1" existing_names
   if command -v pvesh >/dev/null 2>&1; then
     existing_names=$(pvesh get /cluster/resources --type vm 2>/dev/null | \
-                     grep -o '"name":"[^"]*"' | cut -d: -f2 | tr -d '"')
+      grep -o '"name":"[^"]*"' | cut -d: -f2 | tr -d '"')
     if [[ -n "$existing_names" ]] && echo "$existing_names" | grep -qx "$wanted"; then
       return 0
     fi
@@ -148,7 +131,7 @@ if name_exists_cluster "$NAME"; then
   err "A VM/CT with name $NAME already exists"
 fi
 
-VMID=$(next_vmid)
+VMID=$(pvesh get /cluster/nextid)
 
 IMG_PATH="${IMAGES_DIR}/$(basename "$IMAGE_URL")"
 if [[ ! -s "$IMG_PATH" ]]; then
