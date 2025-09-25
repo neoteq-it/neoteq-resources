@@ -9,6 +9,8 @@ users:
     shell: /bin/bash
     lock_passwd: true
     sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - {{SSH_KEY}}
 
 package_update: true
 package_upgrade: false

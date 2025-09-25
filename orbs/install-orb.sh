@@ -229,10 +229,12 @@ cp "$TEMPLATE_PATH" "$UD_FILE"
 ESC_NAME=$(printf '%s' "$NAME" | sed -e 's/[\/&]/\\&/g')
 ESC_CUSTOMER=$(printf '%s' "$CUSTOMER" | sed -e 's/[\/&]/\\&/g')
 ESC_ROLE=$(printf '%s' "$ROLE" | sed -e 's/[\/&]/\\&/g')
+ESC_SSH_KEY=$(sed -e 's/[\/&]/\\&/g' "$SSH_KEY_FILE" | tr -d '\n')
 
 sed -i "s/{{HOSTNAME}}/${ESC_NAME}/g" "$UD_FILE"
 sed -i "s/{{CUSTOMER}}/${ESC_CUSTOMER}/g" "$UD_FILE"
 sed -i "s/{{ROLE}}/${ESC_ROLE}/g" "$UD_FILE"
+sed -i "s/{{SSH_KEY}}/${ESC_SSH_KEY}/g" "$UD_FILE"
 
 if [[ -n "$EXTRA_PACKAGES" ]]; then
   sed -i "s|#EXTRA_PACKAGES_PLACEHOLDER|  - ${EXTRA_PACKAGES}|g" "$UD_FILE"
