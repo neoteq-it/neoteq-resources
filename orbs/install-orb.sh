@@ -48,10 +48,6 @@ IMAGE_URL="$IMAGE_URL_DEFAULT"
 
 # Cloud-Init Template embedded in script
 TEMPLATE='#cloud-config
-hostname: {{HOSTNAME}}
-preserve_hostname: false
-manage_etc_hosts: true
-
 package_update: true
 package_upgrade: false
 packages:
@@ -263,28 +259,26 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-UD_FILE="${SNIPPETS_DIR}/${NAME}-user-data.yaml"
-echo "$TEMPLATE" > "$UD_FILE"
+VD_FILE="${SNIPPETS_DIR}/${NAME}-vendor-data.yaml"
+echo "$TEMPLATE" > "$VD_FILE"
 
-ESC_NAME=$(printf '%s' "$NAME" | sed -e 's/[\/&]/\\&/g')
 ESC_CUSTOMER=$(printf '%s' "$CUSTOMER" | sed -e 's/[\/&]/\\&/g')
 ESC_ROLE=$(printf '%s' "$ROLE" | sed -e 's/[\/&]/\\&/g')
 
-sed -i "s/{{HOSTNAME}}/${ESC_NAME}/g" "$UD_FILE"
-sed -i "s/{{CUSTOMER}}/${ESC_CUSTOMER}/g" "$UD_FILE"
-sed -i "s/{{ROLE}}/${ESC_ROLE}/g" "$UD_FILE"
+sed -i "s/{{CUSTOMER}}/${ESC_CUSTOMER}/g" "$VD_FILE"
+sed -i "s/{{ROLE}}/${ESC_ROLE}/g" "$VD_FILE"
 
 if [[ -n "$EXTRA_PACKAGES" ]]; then
-  sed -i "s|#EXTRA_PACKAGES_PLACEHOLDER|  - ${EXTRA_PACKAGES}|g" "$UD_FILE"
+  sed -i "s|#EXTRA_PACKAGES_PLACEHOLDER|  - ${EXTRA_PACKAGES}|g" "$VD_FILE"
 fi
 
 if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
-  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --login-server https://atlas.neoteq.be|g" "$UD_FILE"
+  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --login-server https://atlas.neoteq.be|g" "$VD_FILE"
 else
-  sed -i "s|#TAILSCALE_UP_CMD|echo 'No tailscale auth key provided'|g" "$UD_FILE"
+  sed -i "s|#TAILSCALE_UP_CMD|echo 'No tailscale auth key provided'|g" "$VD_FILE"
 fi
 
-qm set "$VMID" --cicustom "user=${SNIPPETS_STORAGE}:snippets/$(basename "$UD_FILE")"
+qm set "$VMID" --cicustom "vendor=${SNIPPETS_STORAGE}:snippets/$(basename "$VD_FILE")"
 
 # Regenerate Cloud-Init image to ensure custom data is applied on first boot
 qm cloudinit dump "$VMID"
