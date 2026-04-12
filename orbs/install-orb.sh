@@ -286,6 +286,9 @@ fi
 
 qm set "$VMID" --cicustom "user=${SNIPPETS_STORAGE}:snippets/$(basename "$UD_FILE")"
 
-echo "Starting VM $VMID ($NAME)..."
+# Regenerate Cloud-Init image to ensure custom data is applied on first boot
+qm cloudinit dump "$VMID"
+
+echo "Starting VM $VMID ($NAME) with regenerated Cloud-Init..."
 qm start "$VMID"
 echo "Done. VM $NAME (ID $VMID) is booting with cloud-init."
