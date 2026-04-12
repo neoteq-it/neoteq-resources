@@ -30,7 +30,6 @@ CPU=2
 RAM=4096
 DISK="20G"
 SSH_KEY_URL="https://pub.neoteq.be/orbs/key.pub"
-TEMPL_URL="https://pub.neoteq.be/orbs/userdata-orb.yaml.tmpl"
 CI_USER="ntq"
 DNS_SERVER=""
 SEARCH_DOMAIN=""
@@ -46,6 +45,52 @@ SITE=""
 
 IMAGE_URL_DEFAULT="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 IMAGE_URL="$IMAGE_URL_DEFAULT"
+
+# Cloud-Init Template embedded in script
+TEMPLATE='#cloud-config
+hostname: {{HOSTNAME}}
+preserve_hostname: false
+manage_etc_hosts: true
+
+package_update: true
+package_upgrade: false
+packages:
+  - curl
+  - gnupg
+  - ca-certificates
+  - htop
+  - qemu-guest-agent
+#EXTRA_PACKAGES_PLACEHOLDER
+
+runcmd:
+  # Fix Locale
+  - sed -i '\''s/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/'\'' /etc/locale.gen
+  - locale-gen en_US.UTF-8
+  - update-locale LANG=en_US.UTF-8
+
+  # Ensure basic tooling
+  - apt-get update
+  - apt-get install -y apt-transport-https
+
+  # Install Proxmox Guest Agent
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Tailscale for management overlay
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - systemctl enable --now tailscaled
+  - |
+      # Bring Tailscale up (auth key injected by deploy script)
+      #TAILSCALE_UP_CMD
+
+  # Optional: basic hardening tweaks
+  - sed -i '\''s/^#\?PasswordAuthentication .*/PasswordAuthentication no/'\'' /etc/ssh/sshd_config
+  - systemctl restart ssh || systemctl restart sshd
+
+  # Tag with role/customer for later automation (e.g., via Ansible pull)
+  - mkdir -p /etc/ntq
+  - echo "{{CUSTOMER}}" > /etc/ntq/customer
+  - echo "{{ROLE}}" > /etc/ntq/role
+'
 
 usage() {
 cat <<EOF
@@ -217,31 +262,24 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATE_PATH="${SCRIPT_DIR}/userdata-orb.yaml.tmpl"
-
-curl -fsSL "$TEMPL_URL" -o "$TEMPLATE_PATH"
-
-[[ -r "$TEMPLATE_PATH" ]] || err "Missing template $TEMPLATE_PATH"
 
 UD_FILE="${SNIPPETS_DIR}/${NAME}-user-data.yaml"
-cp "$TEMPLATE_PATH" "$UD_FILE"
+echo "$TEMPLATE" > "$UD_FILE"
 
 ESC_NAME=$(printf '%s' "$NAME" | sed -e 's/[\/&]/\\&/g')
 ESC_CUSTOMER=$(printf '%s' "$CUSTOMER" | sed -e 's/[\/&]/\\&/g')
 ESC_ROLE=$(printf '%s' "$ROLE" | sed -e 's/[\/&]/\\&/g')
-ESC_SSH_KEY=$(sed -e 's/[\/&]/\\&/g' "$SSH_KEY_FILE" | tr -d '\n')
 
 sed -i "s/{{HOSTNAME}}/${ESC_NAME}/g" "$UD_FILE"
 sed -i "s/{{CUSTOMER}}/${ESC_CUSTOMER}/g" "$UD_FILE"
 sed -i "s/{{ROLE}}/${ESC_ROLE}/g" "$UD_FILE"
-sed -i "s/{{SSH_KEY}}/${ESC_SSH_KEY}/g" "$UD_FILE"
 
 if [[ -n "$EXTRA_PACKAGES" ]]; then
   sed -i "s|#EXTRA_PACKAGES_PLACEHOLDER|  - ${EXTRA_PACKAGES}|g" "$UD_FILE"
 fi
 
 if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
-  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --ssh|g" "$UD_FILE"
+  sed -i "s|#TAILSCALE_UP_CMD|tailscale up --authkey ${TAILSCALE_AUTHKEY} --hostname ${NAME} --login-server https://atlas.neoteq.be|g" "$UD_FILE"
 else
   sed -i "s|#TAILSCALE_UP_CMD|echo 'No tailscale auth key provided'|g" "$UD_FILE"
 fi
