@@ -84,6 +84,7 @@ done
 [[ "${EUID}" -eq 0 ]] || err "Run as root, for example: sudo $0"
 need systemctl
 need systemd-run
+need bash
 need tailscale
 need install
 need grep
@@ -105,6 +106,7 @@ SERVICE_NAME="${UNIT_NAME}.service"
 WORKER_FILE="/run/${UNIT_NAME}.sh"
 ENV_FILE="/run/${UNIT_NAME}.env"
 LOG_FILE="/var/log/${UNIT_NAME}.log"
+BASH_BIN=$(command -v bash)
 SCHEDULED=false
 
 parent_cleanup() {
@@ -115,6 +117,9 @@ parent_cleanup() {
 
 if systemctl is-active --quiet "$SERVICE_NAME"; then
   err "$SERVICE_NAME is already running"
+fi
+if systemctl is-failed --quiet "$SERVICE_NAME"; then
+  systemctl reset-failed "$SERVICE_NAME" || true
 fi
 
 trap parent_cleanup EXIT
@@ -201,6 +206,7 @@ SYSTEMD_RUN_ARGS=(
   --unit="$UNIT_NAME"
   --description="NEOTEQ Tailscale login-server migration"
   --property=Type=oneshot
+  "$BASH_BIN"
   "$WORKER_FILE"
 )
 
