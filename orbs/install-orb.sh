@@ -123,6 +123,7 @@ need() { command -v "$1" >/dev/null 2>&1 || err "Missing: $1"; }
 WORK_FILE=""
 SSH_KEY_FILE=""
 IMPORT_LOG=""
+CUSTOMIZE_LOG=""
 
 cleanup() {
   local status=$?
@@ -134,6 +135,9 @@ cleanup() {
   fi
   if [[ -n "${IMPORT_LOG:-}" && -e "$IMPORT_LOG" ]]; then
     rm -f "$IMPORT_LOG" || true
+  fi
+  if [[ -n "${CUSTOMIZE_LOG:-}" && -e "$CUSTOMIZE_LOG" ]]; then
+    rm -f "$CUSTOMIZE_LOG" || true
   fi
   return "$status"
 }
@@ -151,6 +155,23 @@ validate_slug() {
 
 normalize_packages() {
   printf '%s' "$1" | tr ' ' ',' | sed -e 's/,,*/,/g' -e 's/^,//' -e 's/,$//'
+}
+
+have_dhcpcd() {
+  command -v dhcpcd >/dev/null 2>&1 || [[ -x /usr/sbin/dhcpcd ]]
+}
+
+run_virt_customize() {
+  local desc="$1"
+  shift
+
+  echo " - $desc"
+  : >"$CUSTOMIZE_LOG"
+  if ! virt-customize -q -a "$WORK_FILE" "$@" >"$CUSTOMIZE_LOG" 2>&1; then
+    echo "virt-customize failed while: $desc" >&2
+    [[ -s "$CUSTOMIZE_LOG" ]] && cat "$CUSTOMIZE_LOG" >&2
+    err "Image customization failed"
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -259,58 +280,68 @@ else
 fi
 
 # Install libguestfs-tools and dhcpcd-base if not present
-if ! command -v virt-customize &>/dev/null || ! command -v dhcpcd &>/dev/null; then
+if ! command -v virt-customize &>/dev/null || ! have_dhcpcd; then
   need apt-get
   echo "Installing image customization dependencies..."
   apt-get update >/dev/null 2>&1
   if ! command -v virt-customize &>/dev/null; then
-    apt-get install -y libguestfs-tools >/dev/null 2>&1
+    apt-get install -y libguestfs-tools lsb-release >/dev/null 2>&1
   fi
-  if ! command -v dhcpcd &>/dev/null; then
-    apt-get install -y dhcpcd-base >/dev/null 2>&1 || true
+  if ! have_dhcpcd; then
+    apt-get install -y dhcpcd-base >/dev/null 2>&1
+    rm -rf /var/tmp/.guestfs-* 2>/dev/null || true
   fi
   echo "Installed image customization dependencies"
 fi
+need virt-customize
+have_dhcpcd || err "Missing: dhcpcd (install dhcpcd-base)"
 
 # Customize the image
 echo "Customizing Debian 13 cloud image..."
 WORK_FILE=$(mktemp --tmpdir="${IMAGES_DIR}" "${NAME}.XXXXXX.qcow2")
+CUSTOMIZE_LOG=$(mktemp "/tmp/${NAME}.virt-customize.XXXXXX.log")
 cp "$IMG_PATH" "$WORK_FILE"
+export LIBGUESTFS_BACKEND_SETTINGS="${LIBGUESTFS_BACKEND_SETTINGS:-dns=9.9.9.9}"
 
-# Set hostname (though Cloud-Init will override, but good for consistency)
-virt-customize -q -a "$WORK_FILE" --hostname "$NAME" >/dev/null 2>&1
+# libguestfs customization can miss working DNS while the final VM still gets DNS via Cloud-Init.
+run_virt_customize "Prepare image" \
+  --hostname "$NAME" \
+  --run-command "truncate -s 0 /etc/machine-id" \
+  --run-command "rm -f /var/lib/dbus/machine-id" \
+  --run-command "systemctl disable systemd-firstboot.service 2>/dev/null || true; rm -f /etc/systemd/system/sysinit.target.wants/systemd-firstboot.service; ln -sf /dev/null /etc/systemd/system/systemd-firstboot.service" \
+  --run-command "echo 'Etc/UTC' > /etc/timezone && ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime" \
+  --run-command "touch /etc/locale.conf" \
+  --run-command "sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8" \
+  --run-command "cp -a /etc/resolv.conf /etc/resolv.conf.ntq-bak 2>/dev/null || true
+rm -f /etc/resolv.conf
+cat > /etc/resolv.conf <<'EOF'
+nameserver 9.9.9.9
+EOF" \
+  --run-command "cat > /etc/apt/apt.conf.d/99ntq-libguestfs-network <<'EOF'
+Acquire::ForceIPv4 \"true\";
+Acquire::Retries \"3\";
+EOF"
 
-# Prepare for unique machine-id on first boot
-virt-customize -q -a "$WORK_FILE" --run-command "truncate -s 0 /etc/machine-id" >/dev/null 2>&1
-virt-customize -q -a "$WORK_FILE" --run-command "rm -f /var/lib/dbus/machine-id" >/dev/null 2>&1
-
-# Disable systemd-firstboot
-virt-customize -q -a "$WORK_FILE" --run-command "systemctl disable systemd-firstboot.service 2>/dev/null; rm -f /etc/systemd/system/sysinit.target.wants/systemd-firstboot.service; ln -sf /dev/null /etc/systemd/system/systemd-firstboot.service" >/dev/null 2>&1 || true
-
-# Pre-seed timezone and locale
-virt-customize -q -a "$WORK_FILE" --run-command "echo 'Etc/UTC' > /etc/timezone && ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime" >/dev/null 2>&1 || true
-virt-customize -q -a "$WORK_FILE" --run-command "touch /etc/locale.conf" >/dev/null 2>&1 || true
-virt-customize -q -a "$WORK_FILE" --run-command "sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8" >/dev/null 2>&1 || true
-
-# Update packages and install base packages
-virt-customize -q -a "$WORK_FILE" --update >/dev/null 2>&1
 BASE_PACKAGES="curl,gnupg,ca-certificates,htop,qemu-guest-agent"
 if [[ -n "$EXTRA_PACKAGES" ]]; then
   BASE_PACKAGES="${BASE_PACKAGES},${EXTRA_PACKAGES}"
 fi
-virt-customize -q -a "$WORK_FILE" --install "$BASE_PACKAGES" >/dev/null 2>&1
+run_virt_customize "Update package index and install base packages: $BASE_PACKAGES" \
+  --update \
+  --install "$BASE_PACKAGES"
 
 # Install and configure Tailscale
 if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
-  virt-customize -q -a "$WORK_FILE" --run-command "curl -fsSL https://tailscale.com/install.sh | sh" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "systemctl enable tailscaled" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "install -d -m 700 /etc/ntq" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "cat > /etc/ntq/tailscale.env <<'EOF'
+  run_virt_customize "Install and configure Tailscale" \
+    --run-command "curl -4 -fsSL https://tailscale.com/install.sh | sh" \
+    --run-command "systemctl enable tailscaled" \
+    --run-command "install -d -m 700 /etc/ntq" \
+    --run-command "cat > /etc/ntq/tailscale.env <<'EOF'
 TAILSCALE_AUTHKEY='$TAILSCALE_AUTHKEY'
 TAILSCALE_HOSTNAME='$NAME'
 EOF
-chmod 600 /etc/ntq/tailscale.env" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "cat > /usr/local/bin/tailscale-up.sh <<'EOF'
+chmod 600 /etc/ntq/tailscale.env" \
+    --run-command "cat > /usr/local/bin/tailscale-up.sh <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -319,9 +350,9 @@ tailscale up --authkey "\$TAILSCALE_AUTHKEY" --hostname "\$TAILSCALE_HOSTNAME" -
 rm -f /etc/ntq/tailscale.env
 systemctl disable tailscale-up.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/tailscale-up.service /usr/local/bin/tailscale-up.sh
-EOF" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "chmod +x /usr/local/bin/tailscale-up.sh" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "cat > /etc/systemd/system/tailscale-up.service <<'EOF'
+EOF" \
+    --run-command "chmod +x /usr/local/bin/tailscale-up.sh" \
+    --run-command "cat > /etc/systemd/system/tailscale-up.service <<'EOF'
 [Unit]
 Description=Tailscale Up
 After=network-online.target tailscaled.service
@@ -334,15 +365,14 @@ RemainAfterExit=no
 
 [Install]
 WantedBy=multi-user.target
-EOF" >/dev/null 2>&1
-  virt-customize -q -a "$WORK_FILE" --run-command "systemctl enable tailscale-up" >/dev/null 2>&1
+EOF" \
+    --run-command "systemctl enable tailscale-up"
 fi
-
-# Enable QEMU Guest Agent
-virt-customize -q -a "$WORK_FILE" --run-command "systemctl enable qemu-guest-agent" >/dev/null 2>&1 || true
-
-# SSH hardening
-virt-customize -q -a "$WORK_FILE" --run-command "sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config" >/dev/null 2>&1
+run_virt_customize "Finalize image customization" \
+  --run-command "rm -f /etc/apt/apt.conf.d/99ntq-libguestfs-network" \
+  --run-command "if [ -e /etc/resolv.conf.ntq-bak ] || [ -L /etc/resolv.conf.ntq-bak ]; then rm -f /etc/resolv.conf && cp -a /etc/resolv.conf.ntq-bak /etc/resolv.conf && rm -f /etc/resolv.conf.ntq-bak; fi" \
+  --run-command "systemctl enable qemu-guest-agent || true" \
+  --run-command "sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config"
 
 echo "Image customization completed."
 
