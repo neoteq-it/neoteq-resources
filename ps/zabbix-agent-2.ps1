@@ -121,6 +121,16 @@ function Stop-AgentService {
     $service.Dispose()
 }
 
+function Assert-AgentPingResult {
+    param([AllowEmptyCollection()][string[]]$Output, [int]$ExitCode)
+    $resultText = ($Output -join "`n").Trim()
+    # Der Test kann den Wert 1 als unsigned integer (u) oder string (s) ausgeben.
+    if ($ExitCode -ne 0 -or $resultText -cnotmatch '(?m)^\s*agent\.ping\s+\[(?:u|s)\|1\]\s*$') {
+        if ([string]::IsNullOrWhiteSpace($resultText)) { $resultText = '<keine Ausgabe>' }
+        throw "Der lokale Funktionstest agent.ping ist fehlgeschlagen. Exitcode=$ExitCode; Ausgabe: $resultText"
+    }
+}
+
 function Assert-NewAgentRunning {
     $service = Get-Service -Name 'Zabbix Agent 2'
     $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
@@ -246,10 +256,9 @@ Include=$installDir\zabbix_agent2.d\plugins.d\*.conf
     Invoke-Msi -Arguments "/i `"$msi`" ADDLOCAL=AgentProgram DONOTSTART=1 STARTUPTYPE=disabled SKIP=fw SERVER=`"$($settings.Server)`" SERVERACTIVE=`"$($settings.Active)`" HOSTNAME=`"$Hostname`" TLSCONNECT=unencrypted TLSACCEPT=unencrypted INSTALLFOLDER=`"$installDir`" CONF=`"$template`"" -Log (Join-Path $runDir 'install.log')
     & $agentExe -c $agentConfig -T
     if ($LASTEXITCODE -ne 0) { throw 'Die neue Agent-Konfiguration ist ungueltig.' }
-    $ping = & $agentExe -c $agentConfig -t agent.ping
-    if ($LASTEXITCODE -ne 0 -or ($ping -join ' ') -notmatch '\[u\|1\]') {
-        throw 'Der lokale Funktionstest agent.ping ist fehlgeschlagen.'
-    }
+    $ping = @(& $agentExe -c $agentConfig -t agent.ping)
+    $pingExitCode = $LASTEXITCODE
+    Assert-AgentPingResult -Output $ping -ExitCode $pingExitCode
 
     New-NetFirewallRule -Name $ruleName -DisplayName 'Zabbix Agent 2 - Serverzugriff' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 10050 -RemoteAddress $settings.Addresses -Program $agentExe -Profile Any | Out-Null
     $firewallCreated = $true
