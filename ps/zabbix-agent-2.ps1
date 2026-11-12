@@ -31,6 +31,8 @@ $ErrorActionPreference = 'Stop'
 
 # Zentral vor dem Veroeffentlichen anpassbar. Aktueller Patchstand der 7.0-LTS-Reihe.
 $Release = '7.0'
+# Zentral vor dem Veroeffentlichen anpassbar. Aktueller Patchstand der 8.0-LTS-Reihe.
+$Release = '8.0'
 $DownloadUrl = "https://cdn.zabbix.com/zabbix/binaries/stable/$Release/latest/zabbix_agent2-$Release-latest-windows-amd64-openssl.msi"
 
 function Get-ServerSettings {
@@ -100,8 +102,12 @@ function Get-AgentPaths {
 
 function Invoke-Msi {
     param([string]$Arguments, [string]$Log)
+    param([string]$Arguments, [string]$Log, [switch]$AllowNotInstalled)
     $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList "$Arguments /qn /norestart REBOOT=ReallySuppress /L*v `"$Log`"" -Wait -PassThru
     if ($process.ExitCode -eq 3010) {
+    if ($process.ExitCode -eq 1605 -and $AllowNotInstalled) {
+        Write-Host 'Agent 2 ist nicht installiert; keine Deinstallation erforderlich.'
+    } elseif ($process.ExitCode -eq 3010) {
         $script:RebootRequired = $true
         Write-Warning 'Windows Installer meldet einen erforderlichen Neustart. Es wird nicht automatisch neu gestartet.'
     } elseif ($process.ExitCode -ne 0) {
@@ -240,7 +246,9 @@ Include=$installDir\zabbix_agent2.d\plugins.d\*.conf
 
     Write-Host 'Installiere Agent 2, zunaechst ohne Dienststart ...'
     $installAttempted = $true
+    # SERVER ist auch mit CONF fuer die MSI-Startbedingungen erforderlich.
     Invoke-Msi -Arguments "/i `"$msi`" ADDLOCAL=AgentProgram DONOTSTART=1 STARTUPTYPE=disabled SKIP=fw INSTALLFOLDER=`"$installDir`" CONF=`"$template`"" -Log (Join-Path $runDir 'install.log')
+    Invoke-Msi -Arguments "/i `"$msi`" ADDLOCAL=AgentProgram DONOTSTART=1 STARTUPTYPE=disabled SKIP=fw SERVER=`"$($settings.Server)`" SERVERACTIVE=`"$($settings.Active)`" HOSTNAME=`"$Hostname`" TLSCONNECT=unencrypted TLSACCEPT=unencrypted INSTALLFOLDER=`"$installDir`" CONF=`"$template`"" -Log (Join-Path $runDir 'install.log')
     & $agentExe -c $agentConfig -T
     if ($LASTEXITCODE -ne 0) { throw 'Die neue Agent-Konfiguration ist ungueltig.' }
     $ping = & $agentExe -c $agentConfig -t agent.ping
@@ -307,6 +315,7 @@ Include=$installDir\zabbix_agent2.d\plugins.d\*.conf
         if ($installAttempted -and $newStopped) {
             try {
                 Invoke-Msi -Arguments "/x `"$msi`"" -Log (Join-Path $runDir 'rollback-new.log')
+                Invoke-Msi -Arguments "/x `"$msi`"" -Log (Join-Path $runDir 'rollback-new.log') -AllowNotInstalled
             } catch { Write-Warning "Aufraeumen der Agent-2-Installation fehlgeschlagen: $_" }
         }
         if ($oldStopped -and $oldWasRunning -and $newStopped) {
